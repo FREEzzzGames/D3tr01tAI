@@ -15,11 +15,27 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        ndk { abiFilters += listOf("arm64-v8a") }
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DLLAMA_BUILD_TESTS=OFF",
+                    "-DLLAMA_BUILD_EXAMPLES=OFF",
+                    "-DLLAMA_BUILD_SERVER=OFF",
+                    "-DLLAMA_BUILD_COMMON=ON",
+                    "-DLLAMA_OPENSSL=OFF",
+                    "-DGGML_NATIVE=OFF",
+                    "-DGGML_OPENMP=OFF",
+                    "-DGGML_LLAMAFILE=OFF",
+                    "-DGGML_BACKEND_DL=ON"
+                )
+            }
+        }
     }
 
     buildFeatures { compose = true }
-    defaultConfig {
-        ndk { abiFilters += listOf("arm64-v8a") }
+    /*
         externalNativeBuild {
             cmake {
                 arguments += listOf(
