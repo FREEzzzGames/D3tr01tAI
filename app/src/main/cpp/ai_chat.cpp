@@ -56,7 +56,7 @@ static void capture_android_log_callback(enum ggml_log_level level, const char *
 
 static void set_native_error(const std::string & message) {
     std::lock_guard<std::mutex> lock(g_diagnostics_mutex);
-    g_native_diagnostics += "\\n[APP] " + message + "\\n";
+    g_native_diagnostics += "\n[APP] " + message + "\n";
 }
 
 extern "C"
