@@ -5,10 +5,9 @@
 #ifndef AICHAT_LOGGING_H
 #define AICHAT_LOGGING_H
 
-#endif //AICHAT_LOGGING_H
-
 #pragma once
 #include <android/log.h>
+#include "ggml.h"
 
 #ifndef LOG_TAG
 #define LOG_TAG "ai-chat"
@@ -22,8 +21,10 @@
 #endif
 #endif
 
+// __android_log_is_loggable() is only available from API 30.
+// The app supports API 26+, so keep filtering at compile time.
 static inline int ai_should_log(int prio) {
-    return __android_log_is_loggable(prio, LOG_TAG, LOG_MIN_LEVEL);
+    return prio >= LOG_MIN_LEVEL;
 }
 
 #if LOG_MIN_LEVEL <= ANDROID_LOG_VERBOSE
@@ -59,3 +60,5 @@ static inline void aichat_android_log_callback(enum ggml_log_level level,
     if (!ai_should_log(prio)) return;
     __android_log_write(prio, LOG_TAG, text);
 }
+
+#endif // AICHAT_LOGGING_H
