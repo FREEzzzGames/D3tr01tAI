@@ -116,6 +116,7 @@ internal class InferenceEngineImpl private constructor(
         MutableStateFlow<InferenceEngine.State>(InferenceEngine.State.Uninitialized)
     override val state: StateFlow<InferenceEngine.State> = _state.asStateFlow()
 
+    @Volatile private var _nativeReady = false
     private var _readyForSystemPrompt = false
     @Volatile
     private var _cancelGeneration = false
@@ -137,6 +138,7 @@ internal class InferenceEngineImpl private constructor(
                 Log.i(TAG, "Loading native library...")
                 System.loadLibrary("ai-chat")
                 init(nativeLibDir)
+                _nativeReady = true
                 _state.value = InferenceEngine.State.Initialized
                 Log.i(TAG, "Native library loaded! System info: \n${systemInfo()}")
 
@@ -154,7 +156,7 @@ internal class InferenceEngineImpl private constructor(
     override suspend fun loadModel(pathToModel: String) =
         withContext(llamaDispatcher) {
             val currentState = _state.value
-            check(currentState is InferenceEngine.State.Initialized || currentState is InferenceEngine.State.Error) {
+            check(currentState is InferenceEngine.State.Initialized || (currentState is InferenceEngine.State.Error && _nativeReady)) {
                 "Движок ещё не готов: ${currentState.javaClass.simpleName}"
             }
 
