@@ -65,15 +65,17 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_init(JNIEnv *env, jobject /*unu
     // Set llama log handler to Android
     llama_log_set(capture_android_log_callback, nullptr);
 
-    // Loading all CPU backend variants
-    const auto *path_to_backend = env->GetStringUTFChars(nativeLibDir, 0);
-    LOGi("Loading backends from %s", path_to_backend);
-    ggml_backend_load_all_from_path(path_to_backend);
-    env->ReleaseStringUTFChars(nativeLibDir, path_to_backend);
-
-    // Initialize backends
+    // CPU backend is linked statically (GGML_BACKEND_DL=OFF).
+    // Do not search nativeLibDir for dynamic backend plugins: Android packages
+    // the JNI dependency graph, not arbitrary CMake MODULE targets.
+    (void) nativeLibDir;
     llama_backend_init();
-    LOGi("Backend initiated; Log handler set.");
+
+    const size_t backend_count = ggml_backend_reg_count();
+    LOGi("Backend initialized; registered backend count: %zu", backend_count);
+    if (backend_count == 0) {
+        set_native_error("No GGML backend registered. The CPU backend must be linked statically.");
+    }
 }
 
 extern "C"
