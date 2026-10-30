@@ -28,7 +28,7 @@ android {
                     "-DGGML_NATIVE=OFF",
                     "-DGGML_OPENMP=OFF",
                     "-DGGML_LLAMAFILE=OFF",
-                    "-DGGML_BACKEND_DL=ON"
+                    "-DGGML_BACKEND_DL=OFF"
                 )
             }
         }
