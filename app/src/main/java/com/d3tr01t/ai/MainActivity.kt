@@ -198,14 +198,22 @@ private fun D3tr01tApp(context: Context, isOnline: () -> Boolean) {
                         messages = messages + "Вы: $question" + "d3tr01t AI: "
                         busy = true
                         scope.launch {
+                            val answer = StringBuilder()
+                            var lastUiUpdate = android.os.SystemClock.elapsedRealtime()
                             try {
-                                val answer = StringBuilder()
-                                engine.sendUserPrompt(question, 384).collect { token ->
+                                engine.sendUserPrompt(question, 256).collect { token ->
                                     answer.append(token)
-                                    messages = messages.dropLast(1) + "d3tr01t AI: $answer"
+                                    val now = android.os.SystemClock.elapsedRealtime()
+                                    // Native inference emits one item per token. Throttle Compose updates
+                                    // to avoid recomposing the entire chat for every generated token.
+                                    if (now - lastUiUpdate >= 80L) {
+                                        messages = messages.dropLast(1) + "d3tr01t AI: $answer"
+                                        lastUiUpdate = now
+                                    }
                                 }
+                                messages = messages.dropLast(1) + "d3tr01t AI: $answer"
                             } catch (e: Exception) {
-                                messages = messages + "Ошибка генерации: ${e.message}"
+                                messages = messages.dropLast(1) + "d3tr01t AI: $answer" + "Ошибка генерации: ${e.message}"
                             } finally {
                                 busy = false
                             }
