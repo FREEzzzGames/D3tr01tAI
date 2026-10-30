@@ -89,6 +89,9 @@ internal class InferenceEngineImpl private constructor(
     private external fun prepare(): Int
 
     @FastNative
+    private external fun nativeDiagnostics(): String
+
+    @FastNative
     private external fun systemInfo(): String
 
     @FastNative
@@ -137,9 +140,10 @@ internal class InferenceEngineImpl private constructor(
                 _state.value = InferenceEngine.State.Initialized
                 Log.i(TAG, "Native library loaded! System info: \n${systemInfo()}")
 
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.e(TAG, "Failed to load native library", e)
-                throw e
+                val failure = if (e is Exception) e else RuntimeException("Native engine initialization failed: ${e.message}", e)
+                _state.value = InferenceEngine.State.Error(failure)
             }
         }
     }
@@ -149,27 +153,45 @@ internal class InferenceEngineImpl private constructor(
      */
     override suspend fun loadModel(pathToModel: String) =
         withContext(llamaDispatcher) {
-            check(_state.value is InferenceEngine.State.Initialized) {
-                "Cannot load model in ${_state.value.javaClass.simpleName}!"
+            val currentState = _state.value
+            check(currentState is InferenceEngine.State.Initialized || currentState is InferenceEngine.State.Error) {
+                "Движок ещё не готов: ${currentState.javaClass.simpleName}"
             }
 
             try {
-                Log.i(TAG, "Checking access to model file... \n$pathToModel")
-                File(pathToModel).let {
-                    require(it.exists()) { "File not found" }
-                    require(it.isFile) { "Not a valid file" }
-                    require(it.canRead()) { "Cannot read file" }
+                Log.i(TAG, "Checking access to model file... \\n$pathToModel")
+                val modelFile = File(pathToModel)
+                require(modelFile.exists()) { "Файл модели не найден: $pathToModel" }
+                require(modelFile.isFile) { "Выбранный путь не является файлом" }
+                require(modelFile.canRead()) { "Нет прав на чтение файла модели" }
+                require(modelFile.length() >= 1024L) { "Файл слишком мал для GGUF: ${modelFile.length()} байт" }
+                val magic = ByteArray(4)
+                modelFile.inputStream().use { input ->
+                    require(input.read(magic) == 4 && magic.contentEquals(byteArrayOf(0x47, 0x47, 0x55, 0x46))) {
+                        "Неверная сигнатура файла: ожидался GGUF. Проверьте, что скачан именно .gguf, а не HTML-страница."
+                    }
                 }
 
-                Log.i(TAG, "Loading model... \n$pathToModel")
+                // Clear any partially allocated native model left by a previous failed attempt.
+                if (currentState is InferenceEngine.State.Error) {
+                    unload()
+                    _state.value = InferenceEngine.State.Initialized
+                }
+
+                Log.i(TAG, "Loading model (${modelFile.length()} bytes): $pathToModel")
                 _readyForSystemPrompt = false
                 _state.value = InferenceEngine.State.LoadingModel
-                load(pathToModel).let {
-                    // TODO-han.yin: find a better way to pass other error codes
-                    if (it != 0) throw UnsupportedArchitectureException()
+                val loadResult = load(pathToModel)
+                if (loadResult != 0) {
+                    val details = nativeDiagnostics().trim()
+                    throw IOException("llama.cpp не загрузил GGUF (код $loadResult). " +
+                        (details.ifBlank { "Нативный движок не предоставил подробностей." }))
                 }
-                prepare().let {
-                    if (it != 0) throw IOException("Failed to prepare resources")
+                val prepareResult = prepare()
+                if (prepareResult != 0) {
+                    val details = nativeDiagnostics().trim()
+                    throw IOException("Не удалось создать контекст модели (код $prepareResult). " +
+                        (details.ifBlank { "Возможно, недостаточно оперативной памяти." }))
                 }
                 Log.i(TAG, "Model loaded!")
                 _readyForSystemPrompt = true
