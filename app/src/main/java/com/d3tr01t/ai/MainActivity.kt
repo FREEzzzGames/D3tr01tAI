@@ -79,7 +79,7 @@ private fun D3tr01tApp(context: Context, isOnline: () -> Boolean) {
                             val magic = ByteArray(4)
                             temporary.inputStream().use { input ->
                                 require(input.read(magic) == 4 &&
-                                    magic.contentEquals(byteArrayOf(0x47, 0x47, 0x55, 0x46))) {
+                                    magic.contentEquals(byteArrayOf(0x47.toByte(), 0x47.toByte(), 0x55.toByte(), 0x46.toByte()))) {
                                     "Выбранный файл не является GGUF. Возможно, скачалась HTML-страница."
                                 }
                             }
