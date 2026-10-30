@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 #include <unistd.h>
+#include <mutex>
 #include <sampling.h>
 
 #include "logging.h"
@@ -39,11 +40,30 @@ static common_batch                       g_batch;
 static common_chat_templates_ptr          g_chat_templates;
 static common_sampler                   * g_sampler;
 
+static std::mutex g_diagnostics_mutex;
+static std::string g_native_diagnostics;
+
+static void capture_android_log_callback(enum ggml_log_level level, const char * text, void * user_data) {
+    if (text != nullptr) {
+        std::lock_guard<std::mutex> lock(g_diagnostics_mutex);
+        g_native_diagnostics.append(text);
+        if (g_native_diagnostics.size() > 16000) {
+            g_native_diagnostics.erase(0, g_native_diagnostics.size() - 16000);
+        }
+    }
+    aichat_android_log_callback(level, text, user_data);
+}
+
+static void set_native_error(const std::string & message) {
+    std::lock_guard<std::mutex> lock(g_diagnostics_mutex);
+    g_native_diagnostics += "\\n[APP] " + message + "\\n";
+}
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_init(JNIEnv *env, jobject /*unused*/, jstring nativeLibDir) {
     // Set llama log handler to Android
-    llama_log_set(aichat_android_log_callback, nullptr);
+    llama_log_set(capture_android_log_callback, nullptr);
 
     // Loading all CPU backend variants
     const auto *path_to_backend = env->GetStringUTFChars(nativeLibDir, 0);
@@ -59,18 +79,40 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_init(JNIEnv *env, jobject /*unu
 extern "C"
 JNIEXPORT jint JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_load(JNIEnv *env, jobject, jstring jmodel_path) {
+    {
+        std::lock_guard<std::mutex> lock(g_diagnostics_mutex);
+        g_native_diagnostics.clear();
+    }
+    if (g_model != nullptr) {
+        set_native_error("A model is already allocated; unload it before loading another.");
+        return 2;
+    }
+
     llama_model_params model_params = llama_model_default_params();
+    const auto *model_path = env->GetStringUTFChars(jmodel_path, nullptr);
+    if (model_path == nullptr) {
+        set_native_error("JNI could not read the model path.");
+        return 3;
+    }
 
-    const auto *model_path = env->GetStringUTFChars(jmodel_path, 0);
-    LOGd("%s: Loading model from: \n%s\n", __func__, model_path);
-
+    LOGi("%s: Loading GGUF model: %s", __func__, model_path);
     auto *model = llama_model_load_from_file(model_path, model_params);
     env->ReleaseStringUTFChars(jmodel_path, model_path);
+
     if (!model) {
+        set_native_error("llama_model_load_from_file returned null. Check the GGUF file, architecture support, and available RAM.");
         return 1;
     }
     g_model = model;
+    LOGi("GGUF model loaded successfully.");
     return 0;
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_arm_aichat_internal_InferenceEngineImpl_nativeDiagnostics(JNIEnv *env, jobject /*unused*/) {
+    std::lock_guard<std::mutex> lock(g_diagnostics_mutex);
+    return env->NewStringUTF(g_native_diagnostics.c_str());
 }
 
 static llama_context *init_context(llama_model *model, const int n_ctx = DEFAULT_CONTEXT_SIZE) {
@@ -114,11 +156,18 @@ extern "C"
 JNIEXPORT jint JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_prepare(JNIEnv * /*env*/, jobject /*unused*/) {
     auto *context = init_context(g_model);
-    if (!context) { return 1; }
+    if (!context) {
+        set_native_error("llama_init_from_model failed while allocating the inference context. The model may exceed available RAM.");
+        return 1;
+    }
     g_context = context;
     g_batch = common_batch(context);
     g_chat_templates = common_chat_templates_init(g_model, "");
     g_sampler = new_sampler(DEFAULT_SAMPLER_TEMP);
+    if (g_sampler == nullptr) {
+        set_native_error("Failed to initialize the sampler.");
+        return 2;
+    }
     return 0;
 }
 
@@ -265,7 +314,7 @@ static void reset_long_term_states(const bool clear_kv_cache = true) {
     system_prompt_position = 0;
     current_position = 0;
 
-    if (clear_kv_cache)
+    if (clear_kv_cache && g_context != nullptr)
         llama_memory_clear(llama_get_memory(g_context), false);
 }
 
@@ -546,16 +595,24 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_unload(JNIEnv * /*unused*/, jobject /*unused*/) {
-    // Reset long-term & short-term states
+    // Reset state only when a context was successfully created.
     reset_long_term_states();
     reset_short_term_states();
 
-    // Free up resources
-    common_sampler_free(g_sampler);
+    if (g_sampler != nullptr) {
+        common_sampler_free(g_sampler);
+        g_sampler = nullptr;
+    }
     g_chat_templates.reset();
     g_batch = common_batch();
-    llama_free(g_context);
-    llama_model_free(g_model);
+    if (g_context != nullptr) {
+        llama_free(g_context);
+        g_context = nullptr;
+    }
+    if (g_model != nullptr) {
+        llama_model_free(g_model);
+        g_model = nullptr;
+    }
 }
 
 extern "C"
