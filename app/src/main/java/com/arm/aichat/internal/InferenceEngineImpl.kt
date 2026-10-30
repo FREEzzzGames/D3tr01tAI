@@ -169,7 +169,7 @@ internal class InferenceEngineImpl private constructor(
                 require(modelFile.length() >= 1024L) { "Файл слишком мал для GGUF: ${modelFile.length()} байт" }
                 val magic = ByteArray(4)
                 modelFile.inputStream().use { input ->
-                    require(input.read(magic) == 4 && magic.contentEquals(byteArrayOf(0x47, 0x47, 0x55, 0x46))) {
+                    require(input.read(magic) == 4 && magic.contentEquals(byteArrayOf(0x47.toByte(), 0x47.toByte(), 0x55.toByte(), 0x46.toByte()))) {
                         "Неверная сигнатура файла: ожидался GGUF. Проверьте, что скачан именно .gguf, а не HTML-страница."
                     }
                 }
@@ -187,13 +187,13 @@ internal class InferenceEngineImpl private constructor(
                 if (loadResult != 0) {
                     val details = nativeDiagnostics().trim()
                     throw IOException("llama.cpp не загрузил GGUF (код $loadResult). " +
-                        (details.ifBlank { "Нативный движок не предоставил подробностей." }))
+                        (details.takeLast(1200).ifBlank { "Нативный движок не предоставил подробностей." }))
                 }
                 val prepareResult = prepare()
                 if (prepareResult != 0) {
                     val details = nativeDiagnostics().trim()
                     throw IOException("Не удалось создать контекст модели (код $prepareResult). " +
-                        (details.ifBlank { "Возможно, недостаточно оперативной памяти." }))
+                        (details.takeLast(1200).ifBlank { "Возможно, недостаточно оперативной памяти." }))
                 }
                 Log.i(TAG, "Model loaded!")
                 _readyForSystemPrompt = true
