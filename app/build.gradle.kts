@@ -7,6 +7,7 @@ plugins {
 android {
     namespace = "com.d3tr01t.ai"
     compileSdk = 35
+    ndkVersion = "29.0.13113456"
 
     defaultConfig {
         applicationId = "com.d3tr01t.ai"
@@ -17,6 +18,31 @@ android {
     }
 
     buildFeatures { compose = true }
+    defaultConfig {
+        ndk { abiFilters += listOf("arm64-v8a") }
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DLLAMA_BUILD_TESTS=OFF",
+                    "-DLLAMA_BUILD_EXAMPLES=OFF",
+                    "-DLLAMA_BUILD_SERVER=OFF",
+                    "-DLLAMA_BUILD_COMMON=ON",
+                    "-DLLAMA_OPENSSL=OFF",
+                    "-DGGML_NATIVE=OFF",
+                    "-DGGML_OPENMP=OFF",
+                    "-DGGML_LLAMAFILE=OFF",
+                    "-DGGML_BACKEND_DL=ON"
+                )
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.31.6"
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
