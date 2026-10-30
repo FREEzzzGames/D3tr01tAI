@@ -69,24 +69,41 @@ private fun D3tr01tApp(context: Context, isOnline: () -> Boolean) {
                     val file = withContext(Dispatchers.IO) {
                         val dir = File(context.filesDir, "models").apply { mkdirs() }
                         val target = File(dir, "active-model.gguf")
-                        context.contentResolver.openInputStream(uri).use { input ->
-                            requireNotNull(input) { "Не удалось открыть выбранный файл" }
-                            target.outputStream().use { output -> input.copyTo(output) }
+                        val temporary = File(dir, "active-model.gguf.tmp")
+                        try {
+                            val copied = context.contentResolver.openInputStream(uri).use { input ->
+                                requireNotNull(input) { "Не удалось открыть выбранный файл" }
+                                temporary.outputStream().use { output -> input.copyTo(output) }
+                            }
+                            require(copied >= 1024L) { "Файл слишком мал: скопировано $copied байт" }
+                            val magic = ByteArray(4)
+                            temporary.inputStream().use { input ->
+                                require(input.read(magic) == 4 &&
+                                    magic.contentEquals(byteArrayOf(0x47, 0x47, 0x55, 0x46))) {
+                                    "Выбранный файл не является GGUF. Возможно, скачалась HTML-страница."
+                                }
+                            }
+                            if (target.exists()) require(target.delete()) { "Не удалось удалить предыдущую модель" }
+                            require(temporary.renameTo(target)) { "Не удалось завершить копирование модели" }
+                            target
+                        } catch (e: Exception) {
+                            temporary.delete()
+                            throw e
                         }
-                        target
                     }
                     modelPath = file.absolutePath
-                    status = "Модель скопирована. Загрузка в локальный движок…"
+                    status = "GGUF проверен (${file.length()} байт). Загрузка в llama.cpp…"
                     withContext(Dispatchers.IO) {
+                        if (engineState is InferenceEngine.State.ModelReady) engine.cleanUp()
                         engine.loadModel(file.absolutePath)
                         engine.setSystemPrompt(
-                            "Ты d3tr01t AI — персональный локальный помощник. Отвечай по-русски, точно и по делу."
+                            "Ты d3tr01t AI — персональный локальный помощник. Отвечай по-русски, прямо и по делу."
                         )
                     }
                     status = "Модель загружена. Диалог работает локально, без интернета."
                     messages = messages + "Система: модель загружена и готова к работе."
                 } catch (e: Exception) {
-                    status = "Ошибка загрузки: ${e.message ?: "неизвестная ошибка"}"
+                    status = "Ошибка загрузки: ${e.message ?: e.javaClass.simpleName}"
                 } finally {
                     busy = false
                 }
@@ -126,7 +143,9 @@ private fun D3tr01tApp(context: Context, isOnline: () -> Boolean) {
                     Text(status, color = Muted, fontSize = 11.sp)
                     Button(
                         onClick = { modelPicker.launch(arrayOf("*/*")) },
-                        enabled = !busy,
+                        enabled = !busy && (engineState is InferenceEngine.State.Initialized ||
+                            engineState is InferenceEngine.State.ModelReady ||
+                            (engineState is InferenceEngine.State.Error && status.startsWith("Ошибка загрузки:"))),
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Bg)
                     ) { Text("ВЫБРАТЬ GGUF-МОДЕЛЬ", fontWeight = FontWeight.Bold) }
@@ -137,10 +156,16 @@ private fun D3tr01tApp(context: Context, isOnline: () -> Boolean) {
                 Text("ДИАЛОГ", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 Text(
                     when (engineState) {
+                        is InferenceEngine.State.Uninitialized,
+                        is InferenceEngine.State.Initializing -> "ENGINE INITIALIZING"
+                        is InferenceEngine.State.Initialized -> "WAITING FOR MODEL"
+                        is InferenceEngine.State.LoadingModel -> "LOADING MODEL"
+                        is InferenceEngine.State.ProcessingSystemPrompt -> "PREPARING MODEL"
+                        is InferenceEngine.State.ProcessingUserPrompt -> "PROCESSING"
                         is InferenceEngine.State.ModelReady -> "MODEL READY"
                         is InferenceEngine.State.Generating -> "GENERATING"
                         is InferenceEngine.State.Error -> "ENGINE ERROR"
-                        else -> "ENGINE INITIALIZING"
+                        else -> "ENGINE BUSY"
                     },
                     color = Cyan, fontSize = 10.sp
                 )
